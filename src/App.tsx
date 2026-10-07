@@ -1,160 +1,120 @@
+import { useEffect, useState } from "react";
 import "./styles.css";
+import { useLab } from "./domain/useStore";
+import type { Actor, Notice, Role } from "./domain/types";
+import { STATUS_META } from "./domain/status";
+import { StudentView } from "./ui/StudentView";
+import { TeacherView } from "./ui/TeacherView";
+import { AdminView } from "./ui/AdminView";
+import { RecordsView } from "./ui/RecordsView";
 
-const project = {
-  "id": "hxwl-06",
-  "port": 5106,
-  "title": "显微镜玻片观察",
-  "subtitle": "样本、多倍率视野与染色观察记录库",
-  "stack": "React + Vite + TypeScript + CSS",
-  "theme": [
-    "#4338ca",
-    "#0d9488",
-    "#db2777"
-  ],
-  "domain": "生物显微观察",
-  "users": [
-    "实验课教师",
-    "学生",
-    "实验管理员"
-  ],
-  "metrics": [
-    "样本数",
-    "视野记录",
-    "染色方法",
-    "重点结构"
-  ],
-  "filters": [
-    "植物组织",
-    "动物组织",
-    "微生物",
-    "血液涂片"
-  ],
-  "fields": [
-    "样本名称",
-    "样本类型",
-    "染色方式",
-    "放大倍数",
-    "观察结构",
-    "视野描述"
-  ],
-  "records": [
-    [
-      "洋葱表皮",
-      "植物组织",
-      "碘液",
-      "400x",
-      "细胞壁清晰，细胞核可见"
-    ],
-    [
-      "人血涂片",
-      "血液涂片",
-      "瑞氏染色",
-      "1000x",
-      "红细胞分布均匀"
-    ],
-    [
-      "草履虫",
-      "微生物",
-      "活体观察",
-      "200x",
-      "纤毛运动明显"
-    ]
-  ]
-};
-
-const statusColors = ["status-ok", "status-watch", "status-danger"];
-
-function MetricCard({ label, value, index }: { label: string; value: string; index: number }) {
-  return (
-    <article className="metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <i className={statusColors[index % statusColors.length]} />
-    </article>
-  );
-}
+const ROLE_LABEL: Record<Role, string> = { student: "学生", teacher: "教师", admin: "管理员" };
+type Tab = "student" | "teacher" | "admin" | "records";
 
 function App() {
-  const values = project.metrics.map((metric: string, index: number) => {
-    const base = [84, 12, 31, 7][index % 4];
-    return String(base + index * 3);
-  });
+  const { state, dispatch } = useLab();
+  const [actorId, setActorId] = useState("s01");
+  const [tab, setTab] = useState<Tab>("student");
+  const [toasts, setToasts] = useState<Notice[]>([]);
+
+  const actor: Actor = state.users.find((u) => u.userId === actorId) ?? state.users[0];
+
+  const push = (list: Notice[]) => {
+    if (!list?.length) return;
+    setToasts((t) => [...t, ...list]);
+  };
+  const run = (cmd: Parameters<typeof dispatch>[0]) => {
+    const result = dispatch(cmd);
+    push(result.notices);
+    return result.notices;
+  };
+
+  // 管理员面板里“重新载入恢复”按钮绕过 dispatch，经全局事件回传提示
+  useEffect(() => {
+    const handler = (e: Event) => push([(e as CustomEvent<Notice>).detail]);
+    window.addEventListener("hxwl06-notice", handler);
+    return () => window.removeEventListener("hxwl06-notice", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!toasts.length) return;
+    const timer = setTimeout(() => setToasts((t) => t.slice(1)), 5200);
+    return () => clearTimeout(timer);
+  }, [toasts]);
+
+  const todoCounts = {
+    verify: state.observations.filter((o) => o.status === "PENDING_VERIFY").length,
+    review: state.observations.filter((o) => o.status === "PENDING_REVIEW").length,
+    conflict: state.observations.filter((o) => o.status === "CONFLICT").length,
+    reconsider: state.observations.filter((o) => o.status === "RECONSIDER").length,
+    invalidated: state.observations.filter((o) => o.status === "INVALIDATED").length,
+  };
+
+  const tabs: { id: Tab; label: string; roles: Role[]; badge?: number }[] = [
+    { id: "student", label: "学生工作台", roles: ["student", "teacher", "admin"] },
+    { id: "teacher", label: "教师复核", roles: ["student", "teacher", "admin"], badge: todoCounts.review + todoCounts.reconsider + todoCounts.conflict },
+    { id: "admin", label: "管理员维护", roles: ["admin", "teacher", "student"], badge: todoCounts.verify },
+    { id: "records", label: "明细 / 统计 / 留痕", roles: ["student", "teacher", "admin"] },
+  ];
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">{project.id} · port {project.port}</p>
-          <h1>{project.title}</h1>
-          <p className="subtitle">{project.subtitle}</p>
+          <p className="eyebrow">hxwl-06 · 显微镜玻片观察 · 可追溯流程</p>
+          <h1>样本 · 观察 · 复核 · 留痕</h1>
+          <p className="subtitle">
+            学生本人提交（越权代写拒绝并留痕）→ 教师按染色批次版本×放大倍数复核并冻结依据 →
+            管理员调整有效期/标尺后未复核结论立即失效重算、已复核结论保留依据并复议；同玻片先到生效、后到冲突保留；
+            写入失败按最近完整检查点恢复；缺批次版本的旧数据统一“待核”。
+          </p>
         </div>
         <div className="stack-card">
-          <span>技术栈</span>
-          <strong>{project.stack}</strong>
+          <span>当前身份（可切换演示权限）</span>
+          <select className="input" value={actorId} onChange={(e) => setActorId(e.target.value)}>
+            {state.users.map((u) => (
+              <option key={u.userId} value={u.userId}>
+                {ROLE_LABEL[u.role]} · {u.name}（{u.userId}）
+              </option>
+            ))}
+          </select>
+          <div className="todo-strip">
+            <span className="todo"><b>{todoCounts.verify}</b> 待核</span>
+            <span className="todo"><b>{todoCounts.review}</b> 待复核</span>
+            <span className="todo"><b>{todoCounts.conflict}</b> 冲突</span>
+            <span className="todo"><b>{todoCounts.reconsider}</b> 待复议</span>
+            <span className="todo"><b>{todoCounts.invalidated}</b> 已失效</span>
+          </div>
         </div>
       </section>
 
-      <section className="metrics-grid">
-        {project.metrics.map((metric: string, index: number) => (
-          <MetricCard key={metric} label={metric} value={values[index]} index={index} />
+      <nav className="tabbar">
+        {tabs.map((t) => (
+          <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
+            {t.label}
+            {t.badge ? <i className="tab-badge">{t.badge}</i> : null}
+          </button>
+        ))}
+      </nav>
+
+      <section className="legend">
+        {Object.values(STATUS_META).map((m) => (
+          <span key={m.label} className={`legend-item tone-${m.tone}`} title={m.desc}>{m.label}</span>
         ))}
       </section>
 
-      <section className="workspace">
-        <aside className="panel narrow">
-          <h2>角色</h2>
-          <div className="chips">
-            {project.users.map((user: string) => (
-              <span key={user}>{user}</span>
-            ))}
-          </div>
-          <h2>筛选</h2>
-          <div className="chips muted">
-            {project.filters.map((filter: string) => (
-              <button key={filter}>{filter}</button>
-            ))}
-          </div>
-        </aside>
+      {tab === "student" && <StudentView state={state} actor={actor} run={run} />}
+      {tab === "teacher" && <TeacherView state={state} actor={actor} run={run} />}
+      {tab === "admin" && <AdminView state={state} actor={actor} run={run} />}
+      {tab === "records" && <RecordsView state={state} />}
 
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p>{project.domain}</p>
-              <h2>记录字段</h2>
-            </div>
-            <button className="primary-action">新增记录</button>
+      <div className="toast-stack">
+        {toasts.map((n, i) => (
+          <div key={i} className={`toast ${n.tone}`} onClick={() => setToasts((t) => t.filter((_, idx) => idx !== i))}>
+            {n.text}
           </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="records panel">
-        <div className="section-heading">
-          <div>
-            <p>示例数据</p>
-            <h2>近期记录</h2>
-          </div>
-          <button>导出摘要</button>
-        </div>
-        <div className="record-list">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")} className="record-card">
-              <div className="record-index">{String(index + 1).padStart(2, "0")}</div>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+        ))}
+      </div>
     </main>
   );
 }
