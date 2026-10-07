@@ -1,160 +1,117 @@
+import { useState } from "react";
 import "./styles.css";
+import { store, useStore } from "./store";
+import { Dashboard } from "./components/Dashboard";
+import { SubmitView } from "./components/SubmitView";
+import { ReviewView } from "./components/ReviewView";
+import { RecordsView } from "./components/RecordsView";
+import { AdminView } from "./components/AdminView";
+import { AuditView } from "./components/AuditView";
 
-const project = {
-  "id": "hxwl-06",
-  "port": 5106,
-  "title": "显微镜玻片观察",
-  "subtitle": "样本、多倍率视野与染色观察记录库",
-  "stack": "React + Vite + TypeScript + CSS",
-  "theme": [
-    "#4338ca",
-    "#0d9488",
-    "#db2777"
-  ],
-  "domain": "生物显微观察",
-  "users": [
-    "实验课教师",
-    "学生",
-    "实验管理员"
-  ],
-  "metrics": [
-    "样本数",
-    "视野记录",
-    "染色方法",
-    "重点结构"
-  ],
-  "filters": [
-    "植物组织",
-    "动物组织",
-    "微生物",
-    "血液涂片"
-  ],
-  "fields": [
-    "样本名称",
-    "样本类型",
-    "染色方式",
-    "放大倍数",
-    "观察结构",
-    "视野描述"
-  ],
-  "records": [
-    [
-      "洋葱表皮",
-      "植物组织",
-      "碘液",
-      "400x",
-      "细胞壁清晰，细胞核可见"
-    ],
-    [
-      "人血涂片",
-      "血液涂片",
-      "瑞氏染色",
-      "1000x",
-      "红细胞分布均匀"
-    ],
-    [
-      "草履虫",
-      "微生物",
-      "活体观察",
-      "200x",
-      "纤毛运动明显"
-    ]
-  ]
+type Tab = "dashboard" | "submit" | "review" | "records" | "admin" | "audit";
+
+const ROLE_LABEL: Record<string, string> = {
+  student: "学生",
+  teacher: "教师",
+  admin: "管理员",
 };
 
-const statusColors = ["status-ok", "status-watch", "status-danger"];
-
-function MetricCard({ label, value, index }: { label: string; value: string; index: number }) {
-  return (
-    <article className="metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <i className={statusColors[index % statusColors.length]} />
-    </article>
-  );
-}
-
 function App() {
-  const values = project.metrics.map((metric: string, index: number) => {
-    const base = [84, 12, 31, 7][index % 4];
-    return String(base + index * 3);
-  });
+  const { state, audits, currentUser, recovery } = useStore();
+  const [tab, setTab] = useState<Tab>("dashboard");
+
+  const tabs: { id: Tab; label: string; roles?: string[] }[] = [
+    { id: "dashboard", label: "工作台" },
+    { id: "submit", label: "学生提交", roles: ["student"] },
+    { id: "review", label: "教师复核", roles: ["teacher", "admin"] },
+    { id: "records", label: "记录明细" },
+    { id: "admin", label: "批次与维护", roles: ["admin"] },
+    { id: "audit", label: "操作留痕" },
+  ];
+  const visibleTabs = tabs.filter((t) => !t.roles || t.roles.includes(currentUser.role));
+  const activeTab = visibleTabs.some((t) => t.id === tab) ? tab : "dashboard";
+
+  const pendingVerify = state.observations.filter((o) => o.status === "pending_verify").length;
+  const pendingReview = state.tasks.filter((t) => t.type === "review" && t.status === "open").length;
+  const pendingReconsider = state.tasks.filter((t) => t.type === "reconsider" && t.status === "open").length;
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">{project.id} · port {project.port}</p>
-          <h1>{project.title}</h1>
-          <p className="subtitle">{project.subtitle}</p>
+          <p className="eyebrow">hxwl-06 · 可追溯显微观察流程</p>
+          <h1>显微镜玻片观察</h1>
+          <p className="subtitle">
+            样本 → 染色批次版本/标尺 → 观察记录 → 复核任务 → 操作留痕的完整追溯链。
+            先到生效、越权拒绝、批次变更级联失效与复议、检查点回滚、幂等去重全部内置。
+          </p>
         </div>
         <div className="stack-card">
-          <span>技术栈</span>
-          <strong>{project.stack}</strong>
+          <span>当前身份</span>
+          <select
+            className="role-switch"
+            value={currentUser.id}
+            onChange={(e) => {
+              store.setCurrentUser(e.target.value);
+              setTab("dashboard");
+            }}
+          >
+            {state.users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name} · {ROLE_LABEL[u.role]}
+                {u.className ? `（${u.className}）` : ""}
+              </option>
+            ))}
+          </select>
+          <span className="role-note">
+            权限按身份生效：学生只能提交本人结论；教师按批次×倍数复核；管理员维护批次/标尺/导入。
+          </span>
         </div>
       </section>
 
-      <section className="metrics-grid">
-        {project.metrics.map((metric: string, index: number) => (
-          <MetricCard key={metric} label={metric} value={values[index]} index={index} />
+      <nav className="tab-bar">
+        {visibleTabs.map((t) => (
+          <button
+            key={t.id}
+            className={`tab-btn ${activeTab === t.id ? "active" : ""}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+            {t.id === "review" && currentUser.role === "teacher" && pendingReview > 0 ? (
+              <i className="tab-count">{pendingReview}</i>
+            ) : null}
+            {t.id === "review" && currentUser.role === "teacher" && pendingReconsider > 0 ? (
+              <i className="tab-count pink">{pendingReconsider} 复议</i>
+            ) : null}
+            {t.id === "admin" && pendingVerify > 0 ? (
+              <i className="tab-count warn">{pendingVerify} 待核</i>
+            ) : null}
+          </button>
         ))}
-      </section>
+      </nav>
 
-      <section className="workspace">
-        <aside className="panel narrow">
-          <h2>角色</h2>
-          <div className="chips">
-            {project.users.map((user: string) => (
-              <span key={user}>{user}</span>
-            ))}
-          </div>
-          <h2>筛选</h2>
-          <div className="chips muted">
-            {project.filters.map((filter: string) => (
-              <button key={filter}>{filter}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p>{project.domain}</p>
-              <h2>记录字段</h2>
-            </div>
-            <button className="primary-action">新增记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="records panel">
-        <div className="section-heading">
-          <div>
-            <p>示例数据</p>
-            <h2>近期记录</h2>
-          </div>
-          <button>导出摘要</button>
+      {recovery && activeTab !== "admin" ? (
+        <div className="alert recovered global-recovery">
+          <strong>已恢复：</strong>
+          {recovery}
+          <button className="link-btn" onClick={() => store.clearRecoveryNotice()}>
+            知道了
+          </button>
         </div>
-        <div className="record-list">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")} className="record-card">
-              <div className="record-index">{String(index + 1).padStart(2, "0")}</div>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+      ) : null}
+
+      {activeTab === "dashboard" ? <Dashboard state={state} currentUserId={currentUser.id} /> : null}
+      {activeTab === "submit" ? <SubmitView state={state} currentUser={currentUser} /> : null}
+      {activeTab === "review" ? <ReviewView state={state} currentUser={currentUser} /> : null}
+      {activeTab === "records" ? <RecordsView state={state} /> : null}
+      {activeTab === "admin" ? (
+        <AdminView state={state} currentUser={currentUser} recovery={recovery} />
+      ) : null}
+      {activeTab === "audit" ? <AuditView audits={audits} /> : null}
+
+      <footer className="app-footer">
+        本地持久化：主存储 + 独立完整检查点（校验和信封）+ 只追加审计流。写入/导入失败自动从最近完整检查点回滚。
+      </footer>
     </main>
   );
 }
